@@ -7,8 +7,8 @@
 
 # Package:                          # Used for:
 
-Django
-MySQL-python
+Django==1.11
+#MySQL-python
 celery
 requests[security]
 wsgiref
@@ -63,7 +63,7 @@ gevent
 newrelic
 
 # PyWB-related stuff
-pywb
+pywb==2.0.3
 -e git://github.com/internetarchive/warcprox.git@f79e74482339f8c06880b28e889be694b30d4575#egg=warcprox  # unreleased 1/4/16 version of warcprox
 
 # alternate storages

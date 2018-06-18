@@ -39,3 +39,6 @@ COPY requirements.txt /perma/perma_web
 RUN pip install -U pip \
     &&  pip install -r requirements.txt --src /usr/local/src \
     && rm requirements.txt
+
+RUN pip install mysqlclient
+

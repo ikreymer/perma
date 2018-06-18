@@ -25,7 +25,10 @@ os.environ.setdefault("CELERY_LOADER", "django")
 # these imports may depend on env setup and/or newrelic setup that came earlier
 from werkzeug.wsgi import DispatcherMiddleware
 from django.core.wsgi import get_wsgi_application
-from warc_server.app import application as warc_application
+#from warc_server.app import application as warc_application
+from warc_server.permawarcserver import app
+warc_application = app()
+
 
 # Pywb request rewriting for the /timegate route
 class PywbRedirectMiddleware(object):
@@ -45,7 +48,7 @@ class PywbRedirectMiddleware(object):
 application = DispatcherMiddleware(
     get_wsgi_application(),  # Django app
     {
-        perma.settings.TIMEGATE_WARC_ROUTE: PywbRedirectMiddleware(warc_application),
+        #perma.settings.TIMEGATE_WARC_ROUTE: PywbRedirectMiddleware(warc_application),
         perma.settings.WARC_ROUTE: warc_application,  # pywb for record playback
     }
 )

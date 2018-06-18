@@ -44,8 +44,10 @@ from django.utils.functional import cached_property
 from django.views.decorators.debug import sensitive_variables
 from mptt.models import MPTTModel, TreeForeignKey
 from model_utils import FieldTracker
-from pywb.cdx.cdxobject import CDXObject
-from pywb.warc.cdxindexer import write_cdx_index
+#from pywb.cdx.cdxobject import CDXObject
+#from pywb.warc.cdxindexer import write_cdx_index
+from pywb.warcserver.index.cdxobject import CDXObject
+from pywb.indexer.cdxindexer import write_cdx_index
 from taggit.managers import TaggableManager
 from taggit.models import CommonGenericTaggedItemBase, TaggedItemBase
 

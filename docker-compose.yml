@@ -25,7 +25,8 @@ services:
     build: ./perma_web
     image: perma:0.3
     tty: true
-    command: bash
+    #command: bash
+    command: fab run
     volumes:
       # NAMED VOLUMES
       # Use a named, persistent volume so that the node_modules directory,

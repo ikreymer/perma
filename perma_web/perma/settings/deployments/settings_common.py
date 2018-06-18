@@ -40,6 +40,7 @@ DATABASES = {
     },
 }
 if os.environ.get('DOCKERIZED'):
+    DEBUG = True
     DATABASES['default']['USER'] = 'root'
     DATABASES['default']['PASSWORD'] = 'password'
     DATABASES['default']['HOST'] = 'db'
