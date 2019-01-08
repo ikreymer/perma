@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from perma.utils import run_task, stream_warc, stream_warc_if_permissible, clear_wr_session
-from perma.tasks import upload_to_internet_archive, delete_from_internet_archive, run_next_capture
+from perma.tasks import upload_to_internet_archive, delete_from_internet_archive, run_next_capture, run_wr_capture
 from perma.models import Folder, CaptureJob, Link, Capture, Organization, LinkBatch
 
 from .utils import TastypiePagination, load_parent, raise_general_validation_error, \
@@ -426,7 +426,8 @@ class AuthenticatedLinkListView(BaseView):
                 capture_job.status = 'pending'
                 capture_job.link = link
                 capture_job.save(update_fields=['status', 'link'])
-                run_task(run_next_capture.s())
+                #run_task(run_next_capture.s())
+                run_task(run_wr_capture.s())
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 

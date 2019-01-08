@@ -838,6 +838,196 @@ def browser_running(browser, onfailure=None):
 
 ### TASKS ##
 
+
+@shared_task
+@tempdir.run_in_tempdir()
+def run_wr_capture():
+    clean_up_failed_captures()
+
+    # get job to work on
+    capture_job = CaptureJob.get_next_job(reserve=True)
+    if not capture_job:
+        return  # no jobs waiting
+
+    inc_progress(capture_job, 0, "Starting WR Capture")
+
+    try:
+        # basic setup
+        start_time = time.time()
+        link = capture_job.link
+        target_url = link.ascii_safe_url
+
+        if link.user_deleted or link.primary_capture.status != "pending":
+            capture_job.mark_completed('deleted')
+            return
+
+        # A default title is added in models.py, if an api user has not specified a title.
+        # Make sure not to override it during the capture process.
+        page_metadata = {}
+
+        if link.submitted_title != link.get_default_title():
+            page_metadata = {
+                'title': link.submitted_title
+            }
+
+        capture_job.attempt += 1
+        capture_job.save()
+
+        params = {
+            'coll': 'temp',
+            'mode': 'record',
+            'url': target_url
+        }
+
+        sesh = requests.session()
+
+        inc_progress(capture_job, 1, "Initializing Collection")
+
+        # Create new coll + recording
+        res = sesh.post(settings.WR_API + '/new',
+                        headers={'Host': settings.HOST},
+                        json=params)
+
+        new_info = res.json()
+
+        params['user'] = new_info['user']
+        params['rec'] = new_info['rec_name']
+        params['browser'] = 'chrome:60'
+        params['browser_can_write'] = '1'
+        params['request_ts'] = ''
+
+        inc_progress(capture_job, 1, "Creating Browser")
+
+        # Create browser
+        res = sesh.get(settings.WR_API + '/create_remote_browser',
+                       headers={'Host': settings.HOST},
+                       params=params)
+
+        inc_progress(capture_job, 1, "Launching Browser")
+
+        # Init browser
+        query = {'reqid': res.json()['reqid'],
+                 'width': '1200',
+                 'height': '800',
+                 'audio': 'none'
+                }
+
+        res = sesh.get(settings.WEBRECORDER_HOST + '/api/browsers/init_browser',
+                       params=query,
+                       headers={'Host': settings.HOST})
+
+        print(res.json())
+
+        inc_progress(capture_job, 1, "Wait for Page Load")
+
+        # wait for capture
+        time.sleep(20.0)
+
+        inc_progress(capture_job, 1, "Committing Capture...")
+
+        # commit
+        data = {'commit_id': 'NEW'}
+
+        # wait for commit to finish
+        while 'commit_id' in data:
+            print('Waiting for commit: ' + data.get('commit_id'))
+            res = sesh.post(settings.WR_API + '/collection/temp/commit',
+                            params={'user': params['user']},
+                            json=params,
+                            headers={'Host': settings.HOST})
+
+            data = res.json()
+            params['commit_id'] = data.get('commit_id')
+            time.sleep(0.5)
+
+        inc_progress(capture_job, 1, "Analyze Capture")
+
+        # replay
+        replay_url = '/{user}/temp/id_/{url}'.format(user=params['user'],
+                                                     url=params['url'])
+        res = None
+
+        try:
+            res = sesh.get(settings.WEBRECORDER_HOST + ':81' + replay_url,
+                           headers={'Host': settings.PLAYBACK_HOST},
+                           cookies={'__wr_sesh': sesh.cookies['__wr_sesh']}
+                          )
+
+            content_type = res.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
+        except:
+            traceback.print_exc()
+            content_type = ''
+
+        if res:
+            # robots directivecheck
+            robots_directives = res.headers.get('x-robots-tag')
+            inc_progress(capture_job, 1, "Checking x-robots-tag directives.")
+            if xrobots_blacklists_perma(robots_directives):
+                safe_save_fields(link, is_private=True, private_reason='policy')
+                print("x-robots-tag found, darchiving")
+
+        if res and content_type == 'text/html':
+            print('parsing html')
+            dom_tree = parse_page_source(res.text)
+            get_metadata(page_metadata, dom_tree)
+            process_metadata(page_metadata, link)
+
+        inc_progress(capture_job, 1, "Downloading WARC")
+
+        # download
+        res = sesh.get(settings.WEBRECORDER_HOST + '/{0}/temp/$download'.format(params['user']),
+                       headers={'Host': settings.HOST},
+                       stream=True)
+
+        try:
+            with preserve_perma_warc(link.guid,
+                                     link.creation_timestamp,
+                                     link.warc_storage_file()) as perma_warc:
+
+                write_warc_records_recorded_from_web(res.raw, perma_warc)
+
+            # update the db to indicate we succeeded
+            safe_save_fields(
+                link.primary_capture,
+                status='success',
+                content_type=content_type,
+            )
+
+            # set warc size
+            safe_save_fields(
+                link,
+                warc_size=default_storage.size(link.warc_storage_file())
+            )
+
+            capture_job.mark_completed()
+
+        finally:
+            res.raw.close()
+
+        # deleting temp collection & temp user
+        try:
+            print('Deleting: ' + params['user'])
+            res = sesh.delete(settings.WR_API + '/collection/temp',
+                              params={'user': params['user']},
+                              headers={'Host': settings.HOST})
+
+            res = sesh.delete(settings.WR_API + '/user/{0}'.format(params['user']),
+                              headers={'Host': settings.HOST})
+
+        except:
+            pass
+
+    except:
+        traceback.print_exc()
+
+    finally:
+        capture_job.link.captures.filter(status='pending').update(status='failed')
+        if capture_job.status == 'in_progress':
+            capture_job.mark_failed('Failed during capture.')
+
+    run_task(run_wr_capture.s())
+
+
 @shared_task
 @tempdir.run_in_tempdir()
 def run_next_capture():
