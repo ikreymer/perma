@@ -853,7 +853,6 @@ def run_wr_capture():
 
     try:
         # basic setup
-        start_time = time.time()
         link = capture_job.link
         target_url = link.ascii_safe_url
 
@@ -873,85 +872,165 @@ def run_wr_capture():
         capture_job.attempt += 1
         capture_job.save()
 
-        params = {
-            'coll': 'temp',
-            'mode': 'record',
-            'url': target_url
-        }
-
         sesh = requests.session()
 
         inc_progress(capture_job, 1, "Initializing Collection")
 
         # Create new coll + recording
+        new_params = {
+            'coll': 'temp',
+            'mode': 'record',
+            'url': target_url
+        }
+
         res = sesh.post(settings.WR_API + '/new',
                         headers={'Host': settings.HOST},
-                        json=params)
+                        json=new_params)
 
-        new_info = res.json()
+        res = res.json()
+        username = res['user']
+        rec_name = res['rec_name']
 
-        params['user'] = new_info['user']
-        params['rec'] = new_info['rec_name']
-        params['browser'] = 'chrome:60'
-        params['browser_can_write'] = '1'
-        params['request_ts'] = ''
-
-        inc_progress(capture_job, 1, "Creating Browser")
-
-        # Create browser
-        res = sesh.get(settings.WR_API + '/create_remote_browser',
-                       headers={'Host': settings.HOST},
-                       params=params)
-
-        inc_progress(capture_job, 1, "Launching Browser")
-
-        # Init browser
-        query = {'reqid': res.json()['reqid'],
-                 'width': '1200',
-                 'height': '800',
-                 'audio': 'none'
+        query = {'user': username,
+                 'coll': 'temp'
                 }
 
-        res = sesh.get(settings.WEBRECORDER_HOST + '/api/browsers/init_browser',
-                       params=query,
-                       headers={'Host': settings.HOST})
+        # Create auto
+        inc_progress(capture_job, 1, "Creating Automation")
+
+        crawl_spec = {'crawl_depth': 0,
+                      'num_browsers': 1,
+                      'scope': 'single-page'
+                     }
+
+        res = sesh.post(settings.WR_API + '/auto',
+                        params=query,
+                        json=crawl_spec,
+                        headers={'Host': settings.HOST})
 
         print(res.json())
 
-        inc_progress(capture_job, 1, "Wait for Page Load")
+        auto_id = res.json()['auto']
 
-        # wait for capture
-        time.sleep(20.0)
+        # Queue urls
+        res = sesh.post(settings.WR_API + '/auto/{0}/queue_urls'.format(auto_id),
+                        params=query,
+                        json={'urls': [target_url]},
+                        headers={'Host': settings.HOST})
+
+        print(res.json())
+
+        # Start Auto
+        inc_progress(capture_job, 1, "Starting Auto")
+
+        headless = False
+
+        res = sesh.post(settings.WR_API + '/auto/{0}/start'.format(auto_id),
+                        params=query,
+                        headers={'Host': settings.HOST},
+                        json={'timeout': RESOURCE_LOAD_TIMEOUT,
+                              'headless': headless})
+
+        print(res.json())
+
+        # browser reqid
+        reqid = res.json()['browsers'][0]
+
+
+        inc_progress(capture_job, 1, "Waiting for Automation")
+
+        start_time = time.time()
+
+        timed_out = False
+
+        while True:
+            res = sesh.get(settings.WR_API + '/auto/{0}/done'.format(auto_id),
+                           params=query,
+                           headers={'Host': settings.HOST})
+
+            print(res.json())
+
+            if res.json()['done']:
+                print('Done!')
+                break
+
+            #if ((time.time() - start_time) > (RESOURCE_LOAD_TIMEOUT + SHUTDOWN_GRACE_PERIOD)):
+            #    print('Timed Out!')
+            #    timed_out = True
+            #    break
+
+            time.sleep(3.0)
+            print('Waiting for automation')
+
+        # Get Robots
+        inc_progress(capture_job, 1, "Get Robots")
+
+        parts = urllib.parse.urlsplit(target_url)
+        robots_url = urllib.parse.urlunsplit((parts[0], parts[1], '/robots.txt', '', ''))
+
+
+        try:
+            while True:
+                robots_url = '/{user}/temp/{rec}/record/id_/{url}'.format(user=username,
+                                                                          url=robots_url,
+                                                                          rec=rec_name)
+                print(robots_url)
+                res = sesh.get(settings.WEBRECORDER_HOST + ':81' + robots_url,
+                               headers={'Host': settings.PLAYBACK_HOST},
+                               cookies={'__wr_sesh': sesh.cookies['__wr_sesh']},
+                               allow_redirects=False
+                              )
+
+                if not res.is_redirect:
+                    break
+
+                robots_url = res.headers['Location']
+
+        except:
+            traceback.print_exc()
+
 
         inc_progress(capture_job, 1, "Committing Capture...")
 
         # commit
-        data = {'commit_id': 'NEW'}
+        commit_data = {}
 
         # wait for commit to finish
-        while 'commit_id' in data:
-            print('Waiting for commit: ' + data.get('commit_id'))
+        while 'success' not in commit_data:
+            time.sleep(0.5)
+            print('Waiting for commit: ' + commit_data.get('commit_id', 'NEW'))
             res = sesh.post(settings.WR_API + '/collection/temp/commit',
-                            params={'user': params['user']},
-                            json=params,
+                            params={'user': username},
+                            json=commit_data,
                             headers={'Host': settings.HOST})
 
-            data = res.json()
-            params['commit_id'] = data.get('commit_id')
-            time.sleep(0.5)
+            commit_data = res.json()
 
+        # Replay for Analysis
         inc_progress(capture_job, 1, "Analyze Capture")
 
-        # replay
-        replay_url = '/{user}/temp/id_/{url}'.format(user=params['user'],
-                                                     url=params['url'])
         res = None
 
+        next_url = target_url
+
         try:
-            res = sesh.get(settings.WEBRECORDER_HOST + ':81' + replay_url,
-                           headers={'Host': settings.PLAYBACK_HOST},
-                           cookies={'__wr_sesh': sesh.cookies['__wr_sesh']}
-                          )
+            while True:
+                replay_url = '/{user}/temp/id_/{url}'.format(user=username,
+                                                             url=next_url)
+                print('replay: ' + next_url)
+
+                res = sesh.get(settings.WEBRECORDER_HOST + ':81' + replay_url,
+                               headers={'Host': settings.PLAYBACK_HOST},
+                               cookies={'__wr_sesh': sesh.cookies['__wr_sesh']},
+                               allow_redirects=False,
+                              )
+
+                if not res.is_redirect:
+                    break
+
+                next_url = res.headers['Location']
+                if '/archive-error?' in next_url:
+                    break
 
             content_type = res.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
         except:
@@ -967,15 +1046,19 @@ def run_wr_capture():
                 print("x-robots-tag found, darchiving")
 
         if res and content_type == 'text/html':
-            print('parsing html')
-            dom_tree = parse_page_source(res.text)
-            get_metadata(page_metadata, dom_tree)
-            process_metadata(page_metadata, link)
+            try:
+                # oassing in raw content as pyquery doesn't like <?xml> encoding declarations
+                dom_tree = parse_page_source(res.content)
+                get_metadata(page_metadata, dom_tree)
+                process_metadata(page_metadata, link)
+            except:
+                meta_tag_analysis_failed(link)
+                traceback.print_exc()
 
         inc_progress(capture_job, 1, "Downloading WARC")
 
         # download
-        res = sesh.get(settings.WEBRECORDER_HOST + '/{0}/temp/$download'.format(params['user']),
+        res = sesh.get(settings.WEBRECORDER_HOST + '/{0}/temp/$download'.format(username),
                        headers={'Host': settings.HOST},
                        stream=True)
 
@@ -1006,12 +1089,12 @@ def run_wr_capture():
 
         # deleting temp collection & temp user
         try:
-            print('Deleting: ' + params['user'])
+            print('Deleting: ' + username)
             res = sesh.delete(settings.WR_API + '/collection/temp',
-                              params={'user': params['user']},
+                              params={'user': username},
                               headers={'Host': settings.HOST})
 
-            res = sesh.delete(settings.WR_API + '/user/{0}'.format(params['user']),
+            res = sesh.delete(settings.WR_API + '/user/{0}'.format(username),
                               headers={'Host': settings.HOST})
 
         except:
