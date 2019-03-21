@@ -908,7 +908,7 @@ def run_wr_capture():
                         json=crawl_spec,
                         headers={'Host': settings.HOST})
 
-        print(res.json())
+        logger.debug('Automation Create Response: ' + res.text)
 
         auto_id = res.json()['auto']
 
@@ -918,20 +918,23 @@ def run_wr_capture():
                         json={'urls': [target_url]},
                         headers={'Host': settings.HOST})
 
-        print(res.json())
+        logger.debug('Queue Response: ' + res.text)
 
         # Start Auto
         inc_progress(capture_job, 1, "Starting Auto")
 
         headless = False
 
+        screenshot_uri = 'file:///{0}/cap.png'.format(link.guid)
+
         res = sesh.post(settings.WR_API + '/auto/{0}/start'.format(auto_id),
                         params=query,
                         headers={'Host': settings.HOST},
                         json={'timeout': RESOURCE_LOAD_TIMEOUT,
-                              'headless': headless})
+                              'headless': headless,
+                              'screenshot_uri': screenshot_uri})
 
-        print(res.json())
+        logger.debug('Capture Start Response: ' + res.text)
 
         # browser reqid
         reqid = res.json()['browsers'][0]
@@ -948,19 +951,18 @@ def run_wr_capture():
                            params=query,
                            headers={'Host': settings.HOST})
 
-            print(res.json())
+            logger.debug('Waiting for Automation: ' + res.text)
 
             if res.json()['done']:
-                print('Done!')
+                logger.debug('Automation: Done!')
                 break
 
-            #if ((time.time() - start_time) > (RESOURCE_LOAD_TIMEOUT + SHUTDOWN_GRACE_PERIOD)):
-            #    print('Timed Out!')
-            #    timed_out = True
-            #    break
+            if ((time.time() - start_time) > (RESOURCE_LOAD_TIMEOUT + SHUTDOWN_GRACE_PERIOD)):
+                logger.debug('Automation: Timed Out!')
+                timed_out = True
+                break
 
             time.sleep(3.0)
-            print('Waiting for automation')
 
         # Get Robots
         inc_progress(capture_job, 1, "Get Robots")
@@ -974,8 +976,7 @@ def run_wr_capture():
                 robots_url = '/{user}/temp/{rec}/record/id_/{url}'.format(user=username,
                                                                           url=robots_url,
                                                                           rec=rec_name)
-                print(robots_url)
-                res = sesh.get(settings.WEBRECORDER_HOST + ':81' + robots_url,
+                res = sesh.get(settings.WR_CONTENT_ORIGIN + robots_url,
                                headers={'Host': settings.PLAYBACK_HOST},
                                cookies={'__wr_sesh': sesh.cookies['__wr_sesh']},
                                allow_redirects=False
@@ -998,7 +999,7 @@ def run_wr_capture():
         # wait for commit to finish
         while 'success' not in commit_data:
             time.sleep(0.5)
-            print('Waiting for commit: ' + commit_data.get('commit_id', 'NEW'))
+            logging.debug('Waiting for commit: ' + str(commit_data.get('commit_id', 'NEW')))
             res = sesh.post(settings.WR_API + '/collection/temp/commit',
                             params={'user': username},
                             json=commit_data,
@@ -1017,9 +1018,9 @@ def run_wr_capture():
             while True:
                 replay_url = '/{user}/temp/id_/{url}'.format(user=username,
                                                              url=next_url)
-                print('replay: ' + next_url)
+                logging.debug('Replay Test: ' + replay_url)
 
-                res = sesh.get(settings.WEBRECORDER_HOST + ':81' + replay_url,
+                res = sesh.get(settings.WR_CONTENT_ORIGIN + replay_url,
                                headers={'Host': settings.PLAYBACK_HOST},
                                cookies={'__wr_sesh': sesh.cookies['__wr_sesh']},
                                allow_redirects=False,
@@ -1043,7 +1044,7 @@ def run_wr_capture():
             inc_progress(capture_job, 1, "Checking x-robots-tag directives.")
             if xrobots_blacklists_perma(robots_directives):
                 safe_save_fields(link, is_private=True, private_reason='policy')
-                print("x-robots-tag found, darchiving")
+                logging.debug("Robots: x-robots-tag found, darchiving")
 
         if res and content_type == 'text/html':
             try:
@@ -1055,10 +1056,20 @@ def run_wr_capture():
                 meta_tag_analysis_failed(link)
                 traceback.print_exc()
 
+        # Screenshot Test
+        screenshot_replay_url = '/{0}/temp/id_/{1}'.format(username, screenshot_uri)
+        res = sesh.head(settings.WR_CONTENT_ORIGIN + screenshot_replay_url,
+                       headers={'Host': settings.PLAYBACK_HOST},
+                       cookies={'__wr_sesh': sesh.cookies['__wr_sesh']},
+                       allow_redirects=False,
+                      )
+
+        screenshot_success = 'success' if res.status_code == 200 else 'failed'
+
         inc_progress(capture_job, 1, "Downloading WARC")
 
         # download
-        res = sesh.get(settings.WEBRECORDER_HOST + '/{0}/temp/$download'.format(username),
+        res = sesh.get(settings.WR_APP_ORIGIN + '/{0}/temp/$download'.format(username),
                        headers={'Host': settings.HOST},
                        stream=True)
 
@@ -1082,6 +1093,12 @@ def run_wr_capture():
                 warc_size=default_storage.size(link.warc_storage_file())
             )
 
+            safe_save_fields(
+                link.screenshot_capture,
+                status=screenshot_success,
+                content_type='image/png'
+            )
+
             capture_job.mark_completed()
 
         finally:
@@ -1089,7 +1106,7 @@ def run_wr_capture():
 
         # deleting temp collection & temp user
         try:
-            print('Deleting: ' + username)
+            logging.debug('Deleting: ' + username)
             res = sesh.delete(settings.WR_API + '/collection/temp',
                               params={'user': username},
                               headers={'Host': settings.HOST})

@@ -478,7 +478,15 @@ PLAYBACK_HOST = HOST
 # use the remote host and the port that is being publicly exposed
 # and mapped to port 80 on the nginx container by docker-compose. E.g.
 # http://remote-webrecorder-host:8089
-WR_API = 'http://nginx/api/v1'
+
+#
+# origin for non-proxy content access (for capture tests)
+# default to http://nginx:81 for internal instance
+WR_CONTENT_ORIGIN = 'http://nginx:81'
+
+WR_APP_ORIGIN = 'http://nginx'
+
+WR_API = WR_APP_ORIGIN + '/api/v1'
 
 
 # Time (in seconds) to wait for upload to finalize
