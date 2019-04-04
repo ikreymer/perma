@@ -480,9 +480,10 @@ PLAYBACK_HOST = HOST
 # http://remote-webrecorder-host:8089
 WR_API = 'http://nginx/api/v1'
 
-# WR Credentials for the public user that stores all public collections
-WR_PERMA_USER = 'perma'
-WR_PERMA_PASSWORD = os.environ.get('WR_PERMA_PASSWORD', 'TestTest123')
+# WR Credentials for the public user that stores all public collections.
+# Change init_wr.sh if you change these.
+WR_PERMA_USER = 'public'
+WR_PERMA_PASSWORD = 'Test123Test123'
 
 
 # Time (in seconds) to wait for upload to finalize
