@@ -491,6 +491,14 @@ WR_PERMA_PASSWORD = 'Test123Test123'
 # Or, assume error if upload not done after this many seconds
 WR_REPLAY_UPLOAD_TIMEOUT = 20
 
+# We have WR sessions set to expire after 120s (see wr-custom.yaml).
+# We don't want the cookie to expire mid-upload or mid-playback.
+# Use this setting to specify how old a WR session cookie Perma is
+# willing to use, to make the above unlikely. Should be between
+# session.durations.short.total (wr-custom.yaml) and
+# WR_REPLAY_UPLOAD_TIMEOUT (Perma settings)
+WR_COOKIE_PERMITTED_AGE = 60
+
 # circumventing cloudflare's caching policy
 # using different route for timegate
 TIMEGATE_WARC_ROUTE = '/warc/timegate'

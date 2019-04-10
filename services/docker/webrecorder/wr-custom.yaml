@@ -11,7 +11,7 @@
 session.durations:
     # begin customized
     short:
-        total: 60
+        total: 120
         extend: 0
     # end customized
     long:

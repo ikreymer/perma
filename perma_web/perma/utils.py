@@ -614,6 +614,14 @@ def query_wr_api(method, path, cookie, valid_if, json=None, data=None):
     return response, data
 
 
+def get_wr_session_cookie(request, session_key):
+    cookie = request.session.get(session_key)
+    timestamp = request.session.get(session_key + '_timestamp')
+    if cookie and timestamp >= (datetime.utcnow() - timedelta(seconds=settings.WR_COOKIE_PERMITTED_AGE)).timestamp():
+        return cookie
+    return None
+
+
 def safe_get_response_json(response):
     try:
         data = response.json()
